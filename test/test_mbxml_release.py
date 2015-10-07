@@ -141,3 +141,12 @@ class GetReleaseTest(unittest.TestCase):
         self.assertEqual("0", medium["pregap"]["number"])
         self.assertEqual("35000", medium["pregap"]["length"])
         self.assertEqual("[untitled]", medium["pregap"]["recording"]["title"])
+
+    def testDataTrackList(self):
+        """
+        Test that the data track list is parsed if it exists.
+        """
+        res = _common.open_and_parse_test_data(self.datadir, "2db71b51-1389-3ecf-bdfc-934173ce28b2-recordings.xml")
+        medium = res["release"]["medium-list"][0]
+        self.assertTrue("data-track-list" in medium)
+        self.assertEqual(2, len(medium["data-track-list"]))
