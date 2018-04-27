@@ -120,6 +120,11 @@ class GetReleaseTest(unittest.TestCase):
         self.assertEqual(['1', '2'], [t["position"] for t in tracks])
         self.assertEqual(['A', 'B'], [t["number"] for t in tracks])
 
+        res = _common.open_and_parse_test_data(self.datadir, "9ce41d09-40e4-4d33-af0c-7fed1e558dba-recordings.xml")
+        tracks = res["release"]["medium-list"][0]["data-track-list"]
+        self.assertEqual(list(map(str, range(1, 199))), [t["position"] for t in tracks])
+        self.assertEqual(list(map(str, range(1, 199))), [t["number"] for t in tracks])
+
     def testVideo(self):
         """
         Test that the video attribute is parsed.
@@ -142,11 +147,11 @@ class GetReleaseTest(unittest.TestCase):
         self.assertEqual("35000", medium["pregap"]["length"])
         self.assertEqual("[untitled]", medium["pregap"]["recording"]["title"])
 
-    def testDataTrackList(self):
+    def testDataTracklist(self):
         """
-        Test that the data track list is parsed if it exists.
+        Test that data tracklist are parsed.
         """
-        res = _common.open_and_parse_test_data(self.datadir, "2db71b51-1389-3ecf-bdfc-934173ce28b2-recordings.xml")
+        res = _common.open_and_parse_test_data(self.datadir, "9ce41d09-40e4-4d33-af0c-7fed1e558dba-recordings.xml")
         medium = res["release"]["medium-list"][0]
         self.assertTrue("data-track-list" in medium)
-        self.assertEqual(2, len(medium["data-track-list"]))
+        self.assertEqual(198, len(medium["data-track-list"]))

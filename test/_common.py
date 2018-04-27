@@ -2,12 +2,16 @@
 import time
 
 import musicbrainzngs
+from musicbrainzngs import compat
 from os.path import join
 
 try:
     from urllib2 import OpenerDirector
 except ImportError:
     from urllib.request import OpenerDirector
+
+from io import BytesIO
+
 try:
     import StringIO
 except ImportError:
@@ -26,10 +30,14 @@ class FakeOpener(OpenerDirector):
         self.myurl = request.get_full_url()
         self.headers = request.header_items()
         self.request = request
+
         if self.exception:
             raise self.exception
-        else:
+
+        if isinstance(self.response, compat.unicode):
             return StringIO.StringIO(self.response)
+        else:
+            return BytesIO(self.response)
 
     def get_url(self):
         return self.myurl
@@ -70,6 +78,6 @@ def open_and_parse_test_data(datadir, filename):
     :returns: The parsed representation of the XML files content
 
     """
-    with open(join(datadir, filename)) as msg:
+    with open(join(datadir, filename), 'rb') as msg:
         res = musicbrainzngs.mbxml.parse_message(msg)
     return res

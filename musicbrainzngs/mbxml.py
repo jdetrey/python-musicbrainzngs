@@ -84,8 +84,10 @@ def parse_elements(valid_els, inner_els, element):
         call parse_subelement(<subelement>) and
         return a dict {'subelement': <result>}
         if parse_subelement returns a tuple of the form
-        ('subelement-key', <result>) then return a dict
-        {'subelement-key': <result>} instead
+        (True, {'subelement-key': <result>})
+        then merge the second element of the tuple into the
+        result (which may have a key other than 'subelement' or
+        more than 1 key)
     """
     result = {}
     for sub in element:
@@ -96,8 +98,8 @@ def parse_elements(valid_els, inner_els, element):
             result[t] = sub.text or ""
         elif t in inner_els.keys():
             inner_result = inner_els[t](sub)
-            if isinstance(inner_result, tuple):
-                result[inner_result[0]] = inner_result[1]
+            if isinstance(inner_result, tuple) and inner_result[0]:
+                result.update(inner_result[1])
             else:
                 result[t] = inner_result
             # add counts for lists when available
@@ -135,6 +137,7 @@ def parse_message(message):
     result = {}
     valid_elements = {"area": parse_area,
                       "artist": parse_artist,
+                      "instrument": parse_instrument,
                       "label": parse_label,
                       "place": parse_place,
                       "event": parse_event,
@@ -155,6 +158,7 @@ def parse_message(message):
                       "label-list": parse_label_list,
                       "place-list": parse_place_list,
                       "event-list": parse_event_list,
+                      "instrument-list": parse_instrument_list,
                       "release-list": parse_release_list,
                       "release-group-list": parse_release_group_list,
                       "series-list": parse_series_list,
@@ -180,8 +184,12 @@ def parse_collection(collection):
     result = {}
     attribs = ["id", "type", "entity-type"]
     elements = ["name", "editor"]
-    # TODO: add event-list:
-    inner_els = {"release-list": parse_release_list}
+    inner_els = {"release-list": parse_release_list,
+                 "artist-list": parse_artist_list,
+                 "event-list": parse_event_list,
+                 "place-list": parse_place_list,
+                 "recording-list": parse_recording_list,
+                 "work-list": parse_work_list}
     result.update(parse_attributes(attribs, collection))
     result.update(parse_elements(elements, inner_els, collection))
 
@@ -283,13 +291,30 @@ def parse_event_list(el):
 
 def parse_event(event):
     result = {}
-    attribs = ["id", "type"]
-    elements = ["name", "time"]
+    attribs = ["id", "type", "ext:score"]
+    elements = ["name", "time", "setlist", "cancelled", "disambiguation", "user-rating"]
     inner_els = {"life-span": parse_lifespan,
-                 "relation-list": parse_relation_list}
+                 "relation-list": parse_relation_list,
+                 "alias-list": parse_alias_list,
+                 "tag-list": parse_tag_list,
+                 "user-tag-list": parse_tag_list,
+                 "rating": parse_rating}
 
     result.update(parse_attributes(attribs, event))
     result.update(parse_elements(elements, inner_els, event))
+
+    return result
+
+def parse_instrument(instrument):
+    result = {}
+    attribs = ["id", "type", "ext:score"]
+    elements = ["name", "description", "disambiguation"]
+    inner_els = {"relation-list": parse_relation_list,
+                 "tag-list": parse_tag_list,
+                 "alias-list": parse_alias_list,
+                 "annotation": parse_annotation}
+    result.update(parse_attributes(attribs, instrument))
+    result.update(parse_elements(elements, inner_els, instrument))
 
     return result
 
@@ -320,15 +345,15 @@ def parse_label(label):
 def parse_relation_target(tgt):
     attributes = parse_attributes(['id'], tgt)
     if 'id' in attributes:
-        return ('target-id', attributes['id'])
+        return (True, {'target-id': attributes['id']})
     else:
-        return ('target-id', tgt.text)
+        return (True, {'target-id': tgt.text})
 
 def parse_relation_list(rl):
     attribs = ["target-type"]
     ttype = parse_attributes(attribs, rl)
     key = "%s-relation-list" % ttype["target-type"]
-    return (key, [parse_relation(r) for r in rl])
+    return (True, {key: [parse_relation(r) for r in rl]})
 
 def parse_relation(relation):
     result = {}
@@ -336,6 +361,7 @@ def parse_relation(relation):
     elements = ["target", "direction", "begin", "end", "ended", "ordering-key"]
     inner_els = {"area": parse_area,
                  "artist": parse_artist,
+                 "instrument": parse_instrument,
                  "label": parse_label,
                  "place": parse_place,
                  "event": parse_event,
@@ -349,7 +375,32 @@ def parse_relation(relation):
                 }
     result.update(parse_attributes(attribs, relation))
     result.update(parse_elements(elements, inner_els, relation))
+    # We parse attribute-list again to get attributes that have both
+    # text and attribute values
+    result.update(parse_elements(['target-credit'], {"attribute-list": parse_relation_attribute_list}, relation))
 
+    return result
+
+def parse_relation_attribute_list(attributelist):
+    ret = []
+    for attribute in attributelist:
+        ret.append(parse_relation_attribute_element(attribute))
+    return (True, {"attributes": ret})
+
+def parse_relation_attribute_element(element):
+    # Parses an attribute into a dictionary containing an element
+    # {"attribute": <text value>} and also an additional element
+    # containing any xml attributes.
+    # e.g <attribute value="BuxWV 1">number</attribute>
+    # -> {"attribute": "number", "value": "BuxWV 1"}
+    result = {}
+    for attr in element.attrib:
+        if "{" in attr:
+            a = fixtag(attr, NS_MAP)[0]
+        else:
+            a = attr
+        result[a] = element.attrib[attr]
+    result["attribute"] = element.text
     return result
 
 def parse_release(release):
@@ -378,7 +429,22 @@ def parse_release(release):
     return result
 
 def parse_medium_list(ml):
-    return [parse_medium(m) for m in ml]
+    """medium-list results from search have an additional
+    <track-count> element containing the number of tracks
+    over all mediums. Optionally add this"""
+    medium_list = []
+    track_count = None
+    for m in ml:
+        tag = fixtag(m.tag, NS_MAP)[0]
+        if tag == "ws2:medium":
+            medium_list.append(parse_medium(m))
+        elif tag == "ws2:track-count":
+            track_count = int(m.text)
+    ret = {"medium-list": medium_list}
+    if track_count is not None:
+        ret["medium-track-count"] = track_count
+
+    return (True, ret)
 
 def parse_release_event_list(rel):
     return [parse_release_event(re) for re in rel]
@@ -498,11 +564,12 @@ def parse_work_attribute_list(wal):
     return [parse_work_attribute(wa) for wa in wal]
 
 def parse_work_attribute(wa):
-    result = {}
     attribs = ["type"]
-
-    result.update(parse_attributes(attribs, wa))
-    result["attribute"] = wa.text
+    typeinfo = parse_attributes(attribs, wa)
+    result = {}
+    if typeinfo:
+        result = {"attribute": typeinfo["type"],
+                  "value": wa.text}
 
     return result
 
@@ -547,6 +614,12 @@ def parse_cdstub(cdstub):
 
 def parse_offset_list(ol):
     return [int(o.text) for o in ol]
+
+def parse_instrument_list(rl):
+    result = []
+    for r in rl:
+        result.append(parse_instrument(r))
+    return result
 
 def parse_release_list(rl):
     result = []
